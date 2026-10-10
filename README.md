@@ -1,90 +1,106 @@
-# Telas
+# Strato
 
-**Split an ultrawide (or any external) monitor into two independent screens on macOS.**
+Split an external Mac monitor into **two or three independent virtual displays**.
+Choose **top / middle / bottom**, **left / center / right**, or automatic orientation.
+Each zone has its own desktop and full-screen space.
 
-![Telas splitting an ultrawide into two halves and a portrait monitor into top and bottom](docs/demo.gif)
+Maintained by [Mehdi Alizadeh](https://github.com/MehdiAlizadehGitHub).
 
-Each half behaves like a real display: its own menu bar, its own full-screen space, its own Mission Control.
-Landscape monitors are split left/right, portrait monitors top/bottom.
+Strato is based on [Eduardo Worrel’s Telas](https://github.com/eduardoworrel/telas).
+The original author created the virtual-display, streaming and mouse-routing implementation.
+This fork adds configurable thirds and a control window.
 
-> ⚠️ **Experimental.** Telas relies on a private macOS API (`CGVirtualDisplay`). It works on the
-> machines it was built on, but Apple may change it at any time.
+## What this fork adds
 
-[Português](#português) ↓
+- Two or three zones per external monitor; three horizontal rows by default.
+- Explicit orientation, including top / middle / bottom on portrait monitors.
+- Shared rounded edges: thirds have no gaps or overlaps, including odd resolutions.
+- Portrait monitors selected by default, alongside landscape monitors.
+- A control window as well as the menu-bar controls.
+- A screenshot button that captures the physical monitor with numbered zones.
+- Updates signed with the same development certificate, when available, to preserve app identity.
 
-## How it works
-
-macOS cannot split a physical display, so Telas fakes it:
-
-1. For each half, it creates a **virtual display** of exactly that size (same refresh rate as the monitor, 60 Hz fallback).
-2. It streams each virtual display with **ScreenCaptureKit** into a borderless window that covers the matching half of the physical monitor.
-3. It **routes the mouse**: the cursor moves at native speed inside a half and is teleported only when it crosses into another half or display, so movement follows what you see. The cursor is drawn on top in real time, not taken from the video.
-4. Windows that were on the monitor are moved into the halves when you split, and back when you join.
-
-## Requirements
-
-- macOS 14 Sonoma or later (developed on macOS 26, Apple Silicon)
-- Xcode Command Line Tools (`xcode-select --install`)
-- Permissions: **Screen Recording** (to show the halves) and **Accessibility** (to route the mouse and move windows)
-
-## Install
-
-There is no signed release yet; build it from source:
-
-```sh
-git clone https://github.com/eduardoworrel/telas.git
-cd telas
-./build.sh --install
+```text
+┌─────────────────────────┐
+│       Virtual display 1 │
+├─────────────────────────┤
+│       Virtual display 2 │
+├─────────────────────────┤
+│       Virtual display 3 │
+└─────────────────────────┘
 ```
 
-`--install` copies the app to `/Applications` and opens it. It lives in the menu bar (▭▭ icon).
-On first launch a window walks you through the two permissions: click **Allow** on each one, enable
-Telas in System Settings (if it is not listed, use **+** and pick Telas in Applications), then click
-**Reopen Telas** (macOS only confirms the permissions after a restart).
+**Experimental:** Strato uses Apple’s private `CGVirtualDisplay` API.
+Verified on a MacBook Air M2 with macOS 26 and a portrait external monitor.
+A video in full screen remained confined to the middle zone. This is not a guarantee
+for every Mac, macOS version or protected video service.
 
-> Rebuilding produces a new ad-hoc signature, so macOS asks for the permissions again after each build. You can reopen it any time from the menu → *Permissions…*.
+## Build
 
-## Usage
+Requires macOS 14 or later and Xcode Command Line Tools. There is no notarized release.
 
-| Action | How |
-|---|---|
-| Choose which monitors to split | Menu → *Screens to split* (landscape monitors are selected by default) |
-| Split / join | Menu → *Split screens* / *Join screens* |
-| Split or join one monitor while active | Toggle it in *Screens to split* |
-| See which half is which | Menu → *Identify screens* |
-| **Emergency: undo everything** | **⌃⌥⌘J** (works even if the mouse gets lost) |
+```sh
+git clone https://github.com/MehdiAlizadehGitHub/strato.git
+cd strato
+./build.sh
+```
 
-## Known limitations
+The script automatically selects an available Apple Development signing identity.
+You can specify a certificate with `TELAS_SIGN_IDENTITY`.
+If you have no certificate, an explicitly requested ad-hoc build is possible:
 
-- When a display appears or disappears, macOS rearranges windows on **all** screens. That happens on split and join and cannot be prevented from the outside.
-- Full-screen windows are not moved; leave full screen before splitting.
-- Windows larger than a half are shrunk to fit and stay smaller after joining.
-- The halves are a video of the virtual display: expect a small amount of latency and GPU use.
-- The built-in display is never split.
+```sh
+TELAS_SIGN_IDENTITY=- ./build.sh
+```
+
+Ad-hoc rebuilding changes the code identity and may require renewed macOS permissions.
+For repeated updates, keep the same certificate, bundle identifier and app path.
+
+Build directly into Applications with `./build.sh --install`.
+Quit Strato and join its screens before rebuilding. Reopen the same app afterwards.
+Use `TELAS_APP_PATH` to set a different destination.
+A gitignored `.telas-build.env` file can retain local build settings.
+
+## Permissions and use
+
+1. Open Strato. Authorize **Accessibility** and **Screen Recording** in System Settings.
+2. Reopen the app after macOS requests it. Both permissions should show checkmarks.
+3. Select the external monitor, choose **3** and **Top / middle / bottom**, then **Split screens**.
+4. Move windows into the virtual displays before enabling full screen.
+5. Use **Join screens** to restore the physical monitor before changing layout.
+
+The control window and menu-bar icon share the same settings. If the window is closed,
+use **File → New Window** to reopen it.
+
+**Emergency stop: Control + Option + Command + J.**
+
+**Save screen screenshot** saves a local PNG in your Pictures folder and temporarily
+numbers the zones. Screen contents are not uploaded by Strato.
+
+If permissions appear enabled but Strato does not recognize them after replacing an old
+ad-hoc build, remove only Strato’s old entries from the two permission lists, add the
+current app again, and reopen it.
+
+## Validation
+
+```sh
+swiftc Sources/RegionLayout.swift Tests/main.swift -o /tmp/telas-layout-tests
+/tmp/telas-layout-tests
+```
+
+30 cases cover two and three zones, all orientations, portrait and landscape sizes,
+negative monitor origins, contiguous edges and balanced integer dimensions.
+
+## Limitations
+
+- The built-in Mac display is not split.
+- macOS may rearrange windows on all monitors when virtual displays appear or disappear.
+- Existing full-screen windows are not moved automatically; leave full screen before splitting.
+- Large windows are resized to fit and can remain smaller after joining.
+- Live video streaming adds latency and GPU load.
+- Screenshot sharing is enabled for the physical overlay windows in this fork.
+- Changing the layout requires joining the screens first.
 
 ## License
 
-[MIT](LICENSE)
-
----
-
-## Português
-
-**Divide um monitor ultrawide (ou qualquer monitor externo) em duas telas independentes no macOS.**
-
-Cada metade funciona como um monitor de verdade: barra de menus, tela cheia e Mission Control próprios.
-Monitores na horizontal são divididos em esquerda/direita; na vertical, em cima/baixo.
-
-> ⚠️ **Experimental.** Usa uma API privada do macOS (`CGVirtualDisplay`), que a Apple pode mudar a qualquer momento.
-
-**Como funciona:** cria um monitor virtual do tamanho de cada metade, mostra cada um numa janela sem borda
-sobre a metade física (via ScreenCaptureKit) e guia o mouse para que o movimento siga o que você vê.
-As janelas que estavam no monitor vão para as metades ao dividir e voltam ao juntar.
-
-**Instalar:** `git clone https://github.com/eduardoworrel/telas.git && cd telas && ./build.sh --install`.
-Requer macOS 14+ e Command Line Tools. Na primeira vez, uma janela guia a liberação de **Acessibilidade** e
-**Gravação de Tela** (clique em **Permitir**, ative o Telas nos Ajustes e depois em **Reabrir o Telas**).
-
-**Emergência:** **⌃⌥⌘J** desfaz tudo, mesmo que o mouse se perca.
-
-A interface aparece em português quando o idioma principal do Mac é português.
+[MIT](LICENSE). Original copyright: Eduardo Worrel.

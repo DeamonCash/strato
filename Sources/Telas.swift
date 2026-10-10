@@ -1,7 +1,8 @@
 import SwiftUI
 import ScreenCaptureKit
+import Combine
 
-// Telas splits each external monitor into two independent "screens":
+// Telas splits each external monitor into two or three independent screens:
 // it creates one virtual display per half, shows each one in a borderless window over the
 // physical half, and routes the mouse so movement follows what you see.
 // Emergency: ⌃⌥⌘J undoes everything.
@@ -11,7 +12,7 @@ private let isPortuguese = Locale.preferredLanguages.first?.hasPrefix("pt") ?? f
 func L(_ en: String, _ pt: String) -> String { isPortuguese ? pt : en }
 
 @main
-struct TelasApp: App {
+struct StratoApp: App {
     @StateObject private var split = Splitter()
 
     init() {
@@ -19,10 +20,38 @@ struct TelasApp: App {
     }
 
     var body: some Scene {
+        WindowGroup("Strato") {
+            LayoutControls(split: split).padding(20).frame(width: 460)
+        }
         MenuBarExtra {
+            LayoutControls(split: split)
+        } label: {
+            Image(systemName: split.active ? "rectangle.split.2x1.fill" : "rectangle.split.2x1")
+        }
+    }
+}
+
+struct LayoutControls: View {
+    @ObservedObject var split: Splitter
+    var body: some View {
+        VStack(alignment: .leading, spacing: 12) {
             Text(split.status)
             if let e = split.error { Text("⚠️ \(e)") }
             Divider()
+            Picker(L("Zones per screen", "Zonas por tela"), selection: $split.regionCount) {
+                Text("2").tag(2)
+                Text("3").tag(3)
+            }
+            .disabled(split.active || split.busy)
+            Picker(L("Orientation", "Orientação"), selection: $split.direction) {
+                Text(L("Automatic", "Automática")).tag(SplitDirection.automatic)
+                Text(L("Top / middle / bottom", "De cima para baixo")).tag(SplitDirection.rows)
+                Text(L("Left / center / right", "Da esquerda para direita")).tag(SplitDirection.columns)
+            }
+            .disabled(split.active || split.busy)
+            if split.active {
+                Text(L("Join screens before changing the layout", "Junte as telas antes de alterar o layout"))
+            }
             Section(L("Screens to split", "Telas a dividir")) {
                 ForEach(split.externals, id: \.id) { d in
                     Toggle(d.name, isOn: Binding(get: { split.selected.contains(d.id) },
@@ -30,15 +59,18 @@ struct TelasApp: App {
                         .disabled(split.busy)
                 }
             }
+            if !split.active && split.selected.isEmpty {
+                Text(L("Select a screen above to enable splitting", "Selecione uma tela acima para dividir"))
+            }
             Button(split.active ? L("Join screens (⌃⌥⌘J)", "Juntar telas (⌃⌥⌘J)") : L("Split screens", "Dividir telas")) { split.toggle() }
                 .disabled(split.busy || (!split.active && split.selected.isEmpty))
             Button(L("Identify screens", "Identificar telas")) { split.identify() }
                 .disabled(!split.active)
+            Button(L("Save screen screenshot", "Salvar captura da tela")) { split.saveScreenshot() }
+                .disabled(!split.active || split.busy)
             Button(L("Permissions…", "Permissões…")) { Onboarding.show() }
             Divider()
             Button(L("Quit", "Sair")) { split.stop(); NSApp.terminate(nil) }
-        } label: {
-            Image(systemName: split.active ? "rectangle.split.2x1.fill" : "rectangle.split.2x1")
         }
     }
 }
@@ -59,9 +91,7 @@ final class Half: NSObject, SCStreamOutput {
     var virtualBounds: CGRect { CGDisplayBounds(virtualID) }
     /// Current physical region in global CG coordinates (y down). Always recomputed.
     var physical: CGRect {
-        let b = CGDisplayBounds(physicalID)
-        return CGRect(x: b.minX + fraction.minX * b.width, y: b.minY + fraction.minY * b.height,
-                      width: fraction.width * b.width, height: fraction.height * b.height).integral
+        RegionLayout.rect(in: CGDisplayBounds(physicalID), fraction: fraction)
     }
 
     init(physicalID: CGDirectDisplayID, fraction: CGRect, name: String) {
@@ -69,7 +99,7 @@ final class Half: NSObject, SCStreamOutput {
         self.fraction = fraction
         let b = CGDisplayBounds(physicalID)
         let mm = CGDisplayScreenSize(physicalID)
-        pixelSize = CGSize(width: (fraction.width * b.width).rounded(), height: (fraction.height * b.height).rounded())
+        pixelSize = RegionLayout.rect(in: b, fraction: fraction).size
         let hz = CGDisplayCopyDisplayMode(physicalID)?.refreshRate ?? 0
         refreshRate = hz > 0 ? hz : 60
 
@@ -120,7 +150,9 @@ final class Half: NSObject, SCStreamOutput {
             w.isOpaque = true
             w.hasShadow = false
             w.backgroundColor = .black
-            w.sharingType = .none
+            // Streams capture the virtual displays, so these physical overlays cannot feed back.
+            // Keep them shareable so a screenshot of the real monitor shows the three live zones.
+            w.sharingType = .readOnly
             w.isReleasedWhenClosed = false
             layer.contentsGravity = .resize
             layer.backgroundColor = NSColor.black.cgColor
@@ -206,7 +238,9 @@ final class Splitter: ObservableObject {
     @Published var busy = false
     @Published var error: String?
     @Published var status = L("Joined", "Juntas")
-    /// External displays (ID and name). By default only landscape ones are selected.
+    @Published var regionCount = 3
+    @Published var direction: SplitDirection = .rows
+    /// External displays (ID and name). Both portrait and landscape displays are selected by default.
     let externals: [(id: CGDirectDisplayID, name: String)] = Splitter.physicalDisplays()
         .filter { CGDisplayIsBuiltin($0) == 0 }
         .map { id in
@@ -215,7 +249,7 @@ final class Splitter: ObservableObject {
             return (id, "\(name) (\(b.width >= b.height ? L("landscape", "horizontal") : L("portrait", "vertical")))")
         }
     @Published var selected: Set<CGDirectDisplayID> = Set(Splitter.physicalDisplays().filter {
-        CGDisplayIsBuiltin($0) == 0 && CGDisplayBounds($0).width > CGDisplayBounds($0).height
+        CGDisplayIsBuiltin($0) == 0
     })
 
     private var halves: [Half] = []
@@ -263,20 +297,18 @@ final class Splitter: ObservableObject {
         Task {
             do { try await work() } catch { self.stop(); self.error = error.localizedDescription }
             busy = false
-            if active { status = L("Split: \(halves.count) halves", "Dividido: \(halves.count) metades") }
+            if active { status = L("Split: \(halves.count) zones", "Dividido: \(halves.count) zonas") }
         }
     }
 
-    /// Splits the given displays: landscape -> left/right, portrait -> top/bottom.
+    /// Splits the given displays into two or three zones, with automatic or explicit orientation.
     private func add(_ ids: [CGDirectDisplayID]) async throws {
         var added: [Half] = []
         for id in ids where !halves.contains(where: { $0.physicalID == id }) {
             let b = CGDisplayBounds(id)
-            let parts = b.width >= b.height
-                ? [CGRect(x: 0, y: 0, width: 0.5, height: 1), CGRect(x: 0.5, y: 0, width: 0.5, height: 1)]
-                : [CGRect(x: 0, y: 0, width: 1, height: 0.5), CGRect(x: 0, y: 0.5, width: 1, height: 0.5)]
+            let parts = RegionLayout.fractions(size: b.size, count: regionCount, direction: direction)
             for f in parts {
-                added.append(Half(physicalID: id, fraction: f, name: "Telas \(nextName)"))
+                added.append(Half(physicalID: id, fraction: f, name: "Strato \(nextName)"))
                 nextName += 1
             }
         }
@@ -316,6 +348,35 @@ final class Splitter: ObservableObject {
     }
 
     /// Shows a big number on each half for 3 s.
+    func saveScreenshot() {
+        guard let id = halves.first?.physicalID else { return }
+        identify()
+        Task {
+            do {
+                // Let the numbered labels arrive through the three live capture streams.
+                try await Task.sleep(for: .milliseconds(700))
+                let content = try await SCShareableContent.excludingDesktopWindows(false, onScreenWindowsOnly: true)
+                guard let screen = content.displays.first(where: { $0.displayID == id }) else {
+                    throw TelasError("Physical display not found")
+                }
+                let config = SCStreamConfiguration()
+                config.width = Int(CGDisplayPixelsWide(id))
+                config.height = Int(CGDisplayPixelsHigh(id))
+                config.showsCursor = false
+                let image = try await SCScreenshotManager.captureImage(
+                    contentFilter: SCContentFilter(display: screen, excludingWindows: []), configuration: config)
+                let bitmap = NSBitmapImageRep(cgImage: image)
+                guard let png = bitmap.representation(using: .png, properties: [:]) else {
+                    throw TelasError("Could not encode screenshot")
+                }
+                let directory = FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent("Pictures")
+                try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+                try png.write(to: directory.appendingPathComponent("Strato-three-zones.png"))
+            } catch { self.error = error.localizedDescription }
+        }
+    }
+
+    /// Shows a big number on each half for 3 s.
     func identify() {
         var labels: [NSWindow] = []
         for (i, h) in halves.enumerated() {
@@ -351,8 +412,7 @@ final class Splitter: ObservableObject {
         let rects = halves.map { h -> CGRect in
             let size = CGDisplayBounds(h.physicalID).size
             let o = origins[h.physicalID] ?? CGDisplayBounds(h.physicalID).origin
-            return CGRect(x: o.x + h.fraction.minX * size.width, y: o.y + h.fraction.minY * size.height,
-                          width: h.pixelSize.width, height: h.pixelSize.height)
+            return RegionLayout.rect(in: CGRect(origin: o, size: size), fraction: h.fraction)
         }
         let rightEdge = origins.map { CGRect(origin: $0.value, size: CGDisplayBounds($0.key).size).maxX }.max() ?? 0
         let dx = rightEdge - (rects.map(\.minX).min() ?? 0)
@@ -601,7 +661,7 @@ enum Onboarding {
         if window == nil {
             let w = NSWindow(contentRect: CGRect(x: 0, y: 0, width: 460, height: 300),
                              styleMask: [.titled, .closable], backing: .buffered, defer: false)
-            w.title = "Telas"
+            w.title = "Strato"
             w.contentView = NSHostingView(rootView: OnboardingView())
             w.isReleasedWhenClosed = false
             w.center()
@@ -621,15 +681,15 @@ struct OnboardingView: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 16) {
-            Text(L("Telas needs two permissions", "O Telas precisa de duas permissões")).font(.title2.bold())
+            Text(L("Strato needs two permissions", "O Strato precisa de duas permissões")).font(.title2.bold())
             row(L("Accessibility", "Acessibilidade"),
                 L("Routes the mouse between halves and moves windows.", "Guia o mouse entre as metades e move as janelas."),
                 granted: accessibility, action: Permissions.requestAccessibility)
             row(L("Screen Recording", "Gravação de Tela"),
                 L("Shows each virtual display over its half. Nothing leaves your Mac.", "Mostra cada monitor virtual sobre a sua metade. Nada sai do seu Mac."),
                 granted: screenRecording, action: Permissions.requestScreenRecording)
-            Text(L("If Telas is not in the list, drag Telas.app into it or use the + button.",
-                   "Se o Telas não aparecer na lista, arraste o Telas.app para ela ou use o botão +."))
+            Text(L("If Strato is not in the list, drag Strato.app into it or use the + button.",
+                   "Se o Strato não aparecer na lista, arraste o Strato.app para ela ou use o botão +."))
                 .font(.footnote).foregroundStyle(.secondary)
             HStack {
                 if accessibility && screenRecording {
@@ -637,11 +697,11 @@ struct OnboardingView: View {
                     Button(L("Done", "Pronto")) { Onboarding.close() }.keyboardShortcut(.defaultAction)
                 } else {
                     // macOS only confirms the permissions to Telas after it restarts
-                    Text(L("Enabled them in System Settings? Reopen Telas to apply.",
+                    Text(L("Enabled them in System Settings? Reopen Strato to apply.",
                            "Ativou nos Ajustes? Reabra o Telas para aplicar."))
                         .font(.callout)
                     Spacer()
-                    Button(L("Reopen Telas", "Reabrir o Telas")) { relaunch() }.keyboardShortcut(.defaultAction)
+                    Button(L("Reopen Strato", "Reabrir o Strato")) { relaunch() }.keyboardShortcut(.defaultAction)
                 }
             }
         }
