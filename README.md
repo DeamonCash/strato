@@ -1,5 +1,7 @@
 # Strato
 
+<img src="Resources/Strato.png" alt="Strato icon" width="160">
+
 Split an external Mac monitor into **two or three independent virtual displays**.
 Choose **top / middle / bottom**, **left / center / right**, or automatic orientation.
 Each zone has its own desktop and full-screen space.

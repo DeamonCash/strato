@@ -13,12 +13,14 @@ if [[ -z "$SIGN_IDENTITY" ]]; then
   echo "No signing identity: set TELAS_SIGN_IDENTITY. Refusing an ad-hoc signature that resets permissions."
   exit 1
 fi
-mkdir -p "$APP/Contents/MacOS"
+mkdir -p "$APP/Contents/MacOS" "$APP/Contents/Resources"
+cp Resources/Strato.icns "$APP/Contents/Resources/Strato.icns"
 cat > "$APP/Contents/Info.plist" <<PLIST
 <?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0"><dict>
 <key>CFBundleName</key><string>Strato</string>
+<key>CFBundleIconFile</key><string>Strato.icns</string>
 <key>CFBundleIdentifier</key><string>${TELAS_BUNDLE_ID:-io.github.MehdiAlizadehGitHub.strato}</string>
 <key>CFBundleExecutable</key><string>Strato</string>
 <key>CFBundlePackageType</key><string>APPL</string>
