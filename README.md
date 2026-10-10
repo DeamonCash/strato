@@ -6,7 +6,7 @@ Split an external Mac monitor into **two or three independent virtual displays**
 Choose **top / middle / bottom**, **left / center / right**, or automatic orientation.
 Each zone has its own desktop and full-screen space.
 
-Maintained by [Mehdi Alizadeh](https://github.com/MehdiAlizadehGitHub).
+Maintained by [Mehdi Alizadeh](https://github.com/DeamonCash).
 
 Strato is based on [Eduardo Worrel’s Telas](https://github.com/eduardoworrel/telas).
 The original author created the virtual-display, streaming and mouse-routing implementation.
@@ -42,7 +42,7 @@ for every Mac, macOS version or protected video service.
 Requires macOS 14 or later and Xcode Command Line Tools. There is no notarized release.
 
 ```sh
-git clone https://github.com/MehdiAlizadehGitHub/strato.git
+git clone https://github.com/DeamonCash/strato.git
 cd strato
 ./build.sh
 ```
